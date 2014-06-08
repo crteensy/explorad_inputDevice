@@ -2,7 +2,7 @@
 
 #include "inputType.h"
 
-#define SerialOutputDevice Serial// SerialDevice
+#define SerialOutputDevice Serial1// SerialDevice
 
 #define PIN_LEFT 0
 #define PIN_UP 1
