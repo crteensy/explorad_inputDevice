@@ -1,7 +1,8 @@
-#include "inputType.h"
-#include <Bounce2.h>
+#include <Wire.h>
 
-#define SerialOutputDevice Serial1
+#include "inputType.h"
+
+#define SerialOutputDevice Serial// SerialDevice
 
 #define PIN_LEFT 0
 #define PIN_UP 1
@@ -11,97 +12,120 @@
 
 struct Button
 {
-  Button(const uint8_t pin, const EInputType button) :
-    debouncer_(),
-    button_(button)
+  Button(const uint8_t pinMask, const EInputType button) :
+    pinMask_(pinMask),
+    button_(button),
+    state_(true)
   {
-    pinMode(pin, INPUT_PULLUP);
-    debouncer_.attach(pin);
-    debouncer_.interval(bounceInterval_);
+  }
+  void update(uint8_t buttons)
+  {
+    bool newState = (buttons & pinMask_);
+    if (newState != state_)
+    {
+      state_ = newState;
+      if (state_ == false)
+      {
+        // button was pressed
+        SerialOutputDevice.printf("b %d 0\n", button_);
+        state_ = newState;
+        timer_ = 0;
+      }
+    }
+    else if ((state_ == false) && (timer_ >= repeatInterval_))
+    {
+      // repeat button press
+      timer_ = 0;
+      SerialOutputDevice.printf("b %d 1\n", button_);
+    }
+  }
+  const uint8_t pinMask_;
+  const EInputType button_;
+  bool state_;
+  elapsedMillis timer_;
+  static const uint32_t repeatInterval_;
+};
+
+const uint32_t Button::repeatInterval_ = 500;
+
+template<uint8_t bufSize = 10>
+struct SerialInputParser
+{
+  SerialInputParser(Stream& device) :
+    stream_(device)
+  {
+    
   }
   void update()
   {
-    if(!debouncer_.update())
+    while(stream_.available())
     {
-      return;
-    }
-    int value = debouncer_.read();
-    if (value == LOW)
-    {
-      SerialOutputDevice.printf("b %d 0\n", button_);
+      parseChar(stream_.read());
     }
   }
-  Bounce debouncer_;
-  const EInputType button_;
-  static const uint8_t bounceInterval_;
+  void parseChar(char c)
+  {
+    if (c == '\n')
+    {
+      buf_[index_] = 0;
+      index_++;
+      parseLine();
+    }
+    else
+    {
+      if (index_ > (bufSize-2))
+      {
+        index_ = 0;
+        return;
+      }
+      buf_[index_] = c;
+      index_++;
+    }
+  }
+  void parseLine()
+  {
+    Serial.printf("received line \"%s\"\n", buf_);
+    index_ = 0; 
+  }
+  char buf_[bufSize];
+  uint8_t index_;
+  Stream& stream_;
 };
 
-const uint8_t Button::bounceInterval_ = 5;
-
-//template<uint8_t bufSize = 10>
-//struct SerialInputParser
-//{
-//  SerialInputParser(Stream& device) :
-//    stream_(device)
-//  {
-//    
-//  }
-//  void update()
-//  {
-//    while(stream_.available())
-//    {
-//      parseChar(stream_.read());
-//    }
-//  }
-//  void parseChar(char c)
-//  {
-//    if (c == '\n')
-//    {
-//      buf_[index_] = 0;
-//      index_++;
-//      parseLine();
-//    }
-//    else
-//    {
-//      if (index_ > (bufSize-2))
-//      {
-//        index_ = 0;
-//        return;
-//      }
-//      buf_[index_] = c;
-//      index_++;
-//    }
-//  }
-//  void parseLine()
-//  {
-//    Serial.printf("received line \"%s\"\n", buf_);
-//    index_ = 0; 
-//  }
-//  char buf_[bufSize];
-//  uint8_t index_;
-//  Stream& stream_;
-//};
-//
 void setup()
 {
   Serial1.begin(9600);//, SERIAL_8N1);
+  Wire.begin();
 }
 
 void loop()
 {
-  static Button left(PIN_LEFT, eLeft);
-  static Button up(PIN_UP, eUp);
-  static Button right(PIN_RIGHT, eRight);
-  static Button down(PIN_DOWN, eDown);
-  static Button enter(PIN_ENTER, eEnter);
+  static elapsedMillis buttonTimer;
+  static const uint16_t buttonReadInterval = 50;
+  static Button left((1<<eLeft), eLeft);
+  static Button up((1<<eUp), eUp);
+  static Button right((1<<eRight), eRight);
+  static Button down((1<<eDown), eDown);
+  static Button enter((1<<eEnter), eEnter);
   
-//  static SerialInputParser<10> parser(Serial1);
+  static SerialInputParser<10> parser(Serial1);
+
+  if (buttonTimer >= buttonReadInterval)
+  {
+    buttonTimer -= buttonReadInterval;
+    Wire.requestFrom(0x38, 1);
+    while(Wire.available() == 0);
+    uint8_t buttons =  Wire.receive();
+    while(Wire.available())
+    {
+      Wire.receive();
+    }
+    left.update(buttons);
+    up.update(buttons);
+    right.update(buttons);
+    down.update(buttons);
+    enter.update(buttons);
+  }
   
-  left.update();
-  up.update();
-  right.update();
-  down.update();
-  enter.update();
-  
-//  parser.update();
+  parser.update();
 }
